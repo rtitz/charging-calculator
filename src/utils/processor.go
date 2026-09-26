@@ -1,4 +1,4 @@
-package main
+package utils
 
 import (
 	"charging-calculator/variables"
@@ -174,7 +174,7 @@ func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxR
 	return metrics
 }
 
-func processMonthlyData(dirPath string) error {
+func ProcessMonthlyData(dirPath string) error {
 	solarFiles, wallboxFiles, err := discoverMonthlyFiles(dirPath)
 	if err != nil {
 		return err
