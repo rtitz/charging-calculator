@@ -57,83 +57,85 @@ func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxR
 		metrics.HouseConsumptionkWh += currSolar.Record.TotalHouseComsumptionW * timeFactor
 	}
 
-	// 2. 24/7 Wallbox-Timeline verarbeiten
-	solarIdx := 0
-	for i := 1; i < len(wb); i++ {
-		prevWb := wb[i-1]
-		currWb := wb[i]
+	// 2. 24/7 Wallbox-Timeline verarbeiten (nur wenn Daten vorhanden sind)
+	if len(wb) > 0 {
+		solarIdx := 0
+		for i := 1; i < len(wb); i++ {
+			prevWb := wb[i-1]
+			currWb := wb[i]
 
-		deltaWh := currWb.Record.Wh - prevWb.Record.Wh
-		if deltaWh <= 0 {
-			continue
-		}
-
-		wbDuration := currWb.Time.Sub(prevWb.Time).Seconds()
-		if wbDuration <= 0 {
-			wbDuration = 1
-		}
-		wbWatts := (deltaWh / wbDuration) * 3600.0
-
-		bestSolarIdx := solarIdx
-		bestDiff := math.Abs(solar[bestSolarIdx].Time.Sub(currWb.Time).Seconds())
-
-		for j := solarIdx + 1; j < len(solar); j++ {
-			diff := math.Abs(solar[j].Time.Sub(currWb.Time).Seconds())
-			if diff < bestDiff {
-				bestDiff = diff
-				bestSolarIdx = j
-			} else if solar[j].Time.After(currWb.Time) {
-				break
-			}
-		}
-		solarIdx = bestSolarIdx
-
-		wbSolarRatio := 0.0
-
-		if bestDiff <= 600 {
-			solarRec := solar[bestSolarIdx].Record
-			houseBaseW := solarRec.TotalHouseComsumptionW - wbWatts
-			if houseBaseW < 0 {
-				houseBaseW = 0
+			deltaWh := currWb.Record.Wh - prevWb.Record.Wh
+			if deltaWh <= 0 {
+				continue
 			}
 
-			solarW := solarRec.TotalSolarPowerW
-			gridW := solarRec.TotalGridPowerW
+			wbDuration := currWb.Time.Sub(prevWb.Time).Seconds()
+			if wbDuration <= 0 {
+				wbDuration = 1
+			}
+			wbWatts := (deltaWh / wbDuration) * 3600.0
 
-			var wbSolarW float64
+			bestSolarIdx := solarIdx
+			bestDiff := math.Abs(solar[bestSolarIdx].Time.Sub(currWb.Time).Seconds())
 
-			if variables.SolarPrioritization == "car" {
-				if solarW >= wbWatts {
-					wbSolarW = wbWatts
+			for j := solarIdx + 1; j < len(solar); j++ {
+				diff := math.Abs(solar[j].Time.Sub(currWb.Time).Seconds())
+				if diff < bestDiff {
+					bestDiff = diff
+					bestSolarIdx = j
+				} else if solar[j].Time.After(currWb.Time) {
+					break
+				}
+			}
+			solarIdx = bestSolarIdx
+
+			wbSolarRatio := 0.0
+
+			if bestDiff <= 600 {
+				solarRec := solar[bestSolarIdx].Record
+				houseBaseW := solarRec.TotalHouseComsumptionW - wbWatts
+				if houseBaseW < 0 {
+					houseBaseW = 0
+				}
+
+				solarW := solarRec.TotalSolarPowerW
+				gridW := solarRec.TotalGridPowerW
+
+				var wbSolarW float64
+
+				if variables.SolarPrioritization == "car" {
+					if solarW >= wbWatts {
+						wbSolarW = wbWatts
+					} else {
+						wbSolarW = solarW
+					}
 				} else {
-					wbSolarW = solarW
+					solarLeftForWb := solarW - houseBaseW
+					if solarLeftForWb > wbWatts {
+						wbSolarW = wbWatts
+					} else {
+						if solarLeftForWb < 0 {
+							solarLeftForWb = 0
+						}
+						wbSolarW = solarLeftForWb
+					}
+				}
+
+				if gridW <= 0 && solarW > 0 {
+					wbSolarW = wbWatts
+				}
+
+				if wbWatts > 0 {
+					wbSolarRatio = wbSolarW / wbWatts
 				}
 			} else {
-				solarLeftForWb := solarW - houseBaseW
-				if solarLeftForWb > wbWatts {
-					wbSolarW = wbWatts
-				} else {
-					if solarLeftForWb < 0 {
-						solarLeftForWb = 0
-					}
-					wbSolarW = solarLeftForWb
-				}
+				wbSolarRatio = 0.0
 			}
 
-			if gridW <= 0 && solarW > 0 {
-				wbSolarW = wbWatts
-			}
-
-			if wbWatts > 0 {
-				wbSolarRatio = wbSolarW / wbWatts
-			}
-		} else {
-			wbSolarRatio = 0.0
+			wbTotalkWh := deltaWh / 1000.0
+			metrics.SolarChargedkWh += wbTotalkWh * wbSolarRatio
+			metrics.GridChargedkWh += wbTotalkWh * (1.0 - wbSolarRatio)
 		}
-
-		wbTotalkWh := deltaWh / 1000.0
-		metrics.SolarChargedkWh += wbTotalkWh * wbSolarRatio
-		metrics.GridChargedkWh += wbTotalkWh * (1.0 - wbSolarRatio)
 	}
 
 	// 3. Systembilanzierung ausführen
@@ -179,11 +181,10 @@ func ProcessMonthlyData(dirPath string) error {
 		return err
 	}
 
+	// 💡 Master-Liste basiert jetzt rein auf den vorhandenen Solar-Dateien
 	var months []string
 	for m := range solarFiles {
-		if _, found := wallboxFiles[m]; found {
-			months = append(months, m)
-		}
+		months = append(months, m)
 	}
 
 	sort.Slice(months, func(i, j int) bool {
@@ -195,22 +196,26 @@ func ProcessMonthlyData(dirPath string) error {
 
 	for _, month := range months {
 		solarPath := solarFiles[month]
-		wallboxPath := wallboxFiles[month]
+		wallboxPath, hasWallbox := wallboxFiles[month]
 
 		solarTimeline, _ := loadSolarTimeline(solarPath)
-		wbTimeline, _ := loadWallboxTimeline(wallboxPath)
+
+		// 💡 Wallbox-Timeline bleibt leer, wenn keine Datei existiert
+		var wbTimeline []TimedWallboxRecord
+		if hasWallbox {
+			wbTimeline, _ = loadWallboxTimeline(wallboxPath)
+			sort.Slice(wbTimeline, func(i, j int) bool { return wbTimeline[i].Time.Before(wbTimeline[j].Time) })
+		}
 
 		sort.Slice(solarTimeline, func(i, j int) bool { return solarTimeline[i].Time.Before(solarTimeline[j].Time) })
-		sort.Slice(wbTimeline, func(i, j int) bool { return wbTimeline[i].Time.Before(wbTimeline[j].Time) })
 
-		checkTimeOverlap(month, solarTimeline, wbTimeline)
+		checkTimeOverlap(month, solarTimeline, wbTimeline, hasWallbox)
 
 		metrics := calculateMetrics(month, solarTimeline, wbTimeline)
 
-		// 🌟 Finanzberechnungen für die Wallbox (Brutto vs. Reale Netto-Ersparnis)
+		// Finanzberechnungen für die Wallbox
 		wallboxTheoreticalCostEUR := (metrics.TotalChargedkWh * variables.GridPriceCents) / 100.0
 		wallboxActualGridCostEUR := (metrics.GridChargedkWh * variables.GridPriceCents) / 100.0
-
 		netSavingsPerkWhCents := variables.GridPriceCents - variables.SolarExportCreditCents
 		wallboxNetSavingsEUR := (metrics.SolarChargedkWh * netSavingsPerkWhCents) / 100.0
 
