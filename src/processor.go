@@ -39,7 +39,7 @@ func discoverMonthlyFiles(dirPath string) (map[string]string, map[string]string,
 func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxRecord) variables.MonthlyChargeMetrics {
 	metrics := variables.MonthlyChargeMetrics{Month: month}
 
-	// 1. Calculate Core Household Statistics from Solar Timeline (Read-Only)
+	// 1. Integrate Macro Household Totals from Solar Timeline
 	for i := 1; i < len(solar); i++ {
 		prevSolar := solar[i-1]
 		currSolar := solar[i]
@@ -54,12 +54,10 @@ func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxR
 		if currSolar.Record.TotalGridPowerW < 0 {
 			metrics.TotalGridFeedInkWh += (-currSolar.Record.TotalGridPowerW) * timeFactor
 		}
-
-		// Temporary accumulation of raw home usage (we will subtract clean car totals later)
 		metrics.HouseConsumptionkWh += currSolar.Record.TotalHouseComsumptionW * timeFactor
 	}
 
-	// 2. Calculate Wallbox Sourcing Mix using Wallbox as the Master Loop (Read-Only)
+	// 2. Process Wallbox Timeline Slices
 	solarIdx := 0
 	for i := 1; i < len(wb); i++ {
 		prevWb := wb[i-1]
@@ -74,11 +72,8 @@ func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxR
 		if wbDuration <= 0 {
 			wbDuration = 1
 		}
-
-		// Derive the real, actual wattage draw of the charger
 		wbWatts := (deltaWh / wbDuration) * 3600.0
 
-		// Find the solar condition matching the exact moment of this charging event
 		bestSolarIdx := solarIdx
 		bestDiff := math.Abs(solar[bestSolarIdx].Time.Sub(currWb.Time).Seconds())
 
@@ -91,38 +86,48 @@ func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxR
 				break
 			}
 		}
-		solarIdx = bestSolarIdx // Update pointer to keep lookups fast
+		solarIdx = bestSolarIdx
 
 		wbSolarRatio := 0.0
 
-		// Check if the closest solar record falls within a reasonable 5-minute window
-		if bestDiff <= 300 {
+		if bestDiff <= 600 {
 			solarRec := solar[bestSolarIdx].Record
-
-			// Separate base house load from charger load to prioritize home appliances
 			houseBaseW := solarRec.TotalHouseComsumptionW - wbWatts
 			if houseBaseW < 0 {
 				houseBaseW = 0
 			}
 
-			solarLeftForWb := solarRec.TotalSolarPowerW - houseBaseW
-			if solarLeftForWb < 0 {
-				solarLeftForWb = 0
-			}
+			solarW := solarRec.TotalSolarPowerW
+			gridW := solarRec.TotalGridPowerW
 
-			if wbWatts > 0 {
-				wbSolarRatio = solarLeftForWb / wbWatts
-				if wbSolarRatio > 1.0 {
-					wbSolarRatio = 1.0
+			var wbSolarW float64
+
+			if variables.SolarPrioritization == "car" {
+				if solarW >= wbWatts {
+					wbSolarW = wbWatts
+				} else {
+					wbSolarW = solarW
+				}
+			} else {
+				solarLeftForWb := solarW - houseBaseW
+				if solarLeftForWb > wbWatts {
+					wbSolarW = wbWatts
+				} else {
+					if solarLeftForWb < 0 {
+						solarLeftForWb = 0
+					}
+					wbSolarW = solarLeftForWb
 				}
 			}
 
-			// If back-exporting to the grid, the car runs entirely on solar power
-			if solarRec.TotalGridPowerW <= 0 && solarRec.TotalSolarPowerW > 0 {
-				wbSolarRatio = 1.0
+			if gridW <= 0 && solarW > 0 {
+				wbSolarW = wbWatts
+			}
+
+			if wbWatts > 0 {
+				wbSolarRatio = wbSolarW / wbWatts
 			}
 		} else {
-			// No matching daytime solar record means it occurred during an overnight inverter shutdown
 			wbSolarRatio = 0.0
 		}
 
@@ -131,22 +136,19 @@ func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxR
 		metrics.GridChargedkWh += wbTotalkWh * (1.0 - wbSolarRatio)
 	}
 
-	// 3. Aggregate Final Structural Splits cleanly
+	// 3. Balance Metrics and System Splits
 	metrics.TotalChargedkWh = metrics.SolarChargedkWh + metrics.GridChargedkWh
 	if metrics.TotalChargedkWh > 0 {
 		metrics.SolarPercentage = (metrics.SolarChargedkWh / metrics.TotalChargedkWh) * 100
 	}
 
-	// Subtract the car's energy from total household load to separate the house base load metrics
 	metrics.HouseConsumptionkWh = metrics.HouseConsumptionkWh - metrics.TotalChargedkWh
 	if metrics.HouseConsumptionkWh < 0 {
 		metrics.HouseConsumptionkWh = 0
 	}
 
-	// Deduct the car's solar power to isolate the house's solar coverage share
-	// (House has absolute priority on generation)
-	totalSolarUsedBySystem := metrics.TotalSolarGenerationkWh - metrics.TotalGridFeedInkWh
-	metrics.HouseSourcedFromSolarkWh = totalSolarUsedBySystem - metrics.SolarChargedkWh
+	totalSolarSelfConsumed := metrics.TotalSolarGenerationkWh - metrics.TotalGridFeedInkWh
+	metrics.HouseSourcedFromSolarkWh = totalSolarSelfConsumed - metrics.SolarChargedkWh
 	if metrics.HouseSourcedFromSolarkWh < 0 {
 		metrics.HouseSourcedFromSolarkWh = 0
 	}
@@ -155,8 +157,19 @@ func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxR
 	}
 
 	metrics.HouseSourcedFromGridkWh = metrics.HouseConsumptionkWh - metrics.HouseSourcedFromSolarkWh
+
+	// NEW PERCENTAGE RATIO CALCULATIONS
+	if metrics.HouseConsumptionkWh > 0 {
+		metrics.HouseSolarPercentage = (metrics.HouseSourcedFromSolarkWh / metrics.HouseConsumptionkWh) * 100
+	}
+
 	metrics.TotalGridConsumptionkWh = metrics.HouseSourcedFromGridkWh + metrics.GridChargedkWh
 	metrics.OverallTotalConsumptionkWh = metrics.HouseConsumptionkWh + metrics.TotalChargedkWh
+
+	if metrics.OverallTotalConsumptionkWh > 0 {
+		totalCombinedSolarPowerkWh := metrics.HouseSourcedFromSolarkWh + metrics.SolarChargedkWh
+		metrics.TotalSolarPercentage = (totalCombinedSolarPowerkWh / metrics.OverallTotalConsumptionkWh) * 100
+	}
 
 	return metrics
 }
@@ -175,6 +188,9 @@ func processMonthlyData(dirPath string) error {
 	}
 
 	sort.Slice(months, func(i, j int) bool {
+		if variables.OutputOrder == "asc" {
+			return months[i] < months[j]
+		}
 		return months[i] > months[j]
 	})
 
@@ -192,7 +208,8 @@ func processMonthlyData(dirPath string) error {
 
 		metrics := calculateMetrics(month, solarTimeline, wbTimeline)
 
-		fmt.Printf("\nMonth:                               %s\n", metrics.Month)
+		fmt.Printf("\n\n=================================================================")
+		fmt.Printf("\nMonth:                               %s (Priority: %s)\n", metrics.Month, variables.SolarPrioritization)
 		fmt.Printf("Total Solar Production:              %.2f kWh\n", metrics.TotalSolarGenerationkWh)
 		fmt.Printf("Total Surplus Grid Feed-In (Export): %.2f kWh\n", metrics.TotalGridFeedInkWh)
 		fmt.Printf("-----------------------------------------------------------------\n")
@@ -200,6 +217,7 @@ func processMonthlyData(dirPath string) error {
 		fmt.Printf("  ├── Base House Consumption:        %.2f kWh\n", metrics.HouseConsumptionkWh)
 		fmt.Printf("  ├── Sourced from Solar:            %.2f kWh\n", metrics.HouseSourcedFromSolarkWh)
 		fmt.Printf("  └── Sourced from Grid:             %.2f kWh\n", metrics.HouseSourcedFromGridkWh)
+		fmt.Printf("  └── House Base Solar Share:        %.1f%%\n", metrics.HouseSolarPercentage)
 		fmt.Printf("-----------------------------------------------------------------\n")
 		fmt.Printf("WALLBOX METRICS:\n")
 		fmt.Printf("  ├── Wallbox Total Charged:         %.2f kWh\n", metrics.TotalChargedkWh)
@@ -210,6 +228,7 @@ func processMonthlyData(dirPath string) error {
 		fmt.Printf("COMBINED SYSTEM METRICS:\n")
 		fmt.Printf("  ├── TOTAL CONSUMPTION FROM GRID:   %.2f kWh\n", metrics.TotalGridConsumptionkWh)
 		fmt.Printf("  └── OVERALL TOTAL CONSUMPTION:     %.2f kWh\n", metrics.OverallTotalConsumptionkWh)
+		fmt.Printf("  └── TOTAL SYSTEM SOLAR SHARE:      %.1f%%\n", metrics.TotalSolarPercentage)
 		fmt.Printf("=================================================================\n")
 	}
 	return nil
