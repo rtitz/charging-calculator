@@ -35,6 +35,7 @@ COMBINED SYSTEM METRICS:
 - **Overnight Gap Bridging:** Detects automated overnight inverter shutdowns (e.g., when PV production drops to zero) and automatically assigns overnight car charging events to 100% grid power seamlessly without throwing out records.
 - **Dynamic Prioritization Matrix:** Toggle load priority profiles via configuration flags (`"house"` to favor standard home appliances first, or `"car"` to direct pure solar margins directly to your EV).
 - **Flexible Ordering Logic:** Read and print historical month sets sequentially in ascending (`"asc"`) or descending (`"desc"`) chronological order.
+- **Timeline Range Filtering:** Trim metric computation scopes gracefully on the fly via execution args (`-start YYYY-MM`) without deleting historical data sets.
 - **Ultra-light Memory Profile:** Utilizes read-only data streams and linear step indexing to process files containing over **1,300,000+ entries in seconds** on a standard MacBook Air.
 
 ## 📂 Project Architecture
@@ -50,20 +51,20 @@ Organize your workspace files according to the standard Go package blueprint bel
 │   └── 2026-08-wallbox.json
 └── src/
     ├── go.mod
-    ├── main.go            # Entry point orchestration execution
+    ├── main.go            # Entry point orchestration execution & flag registration
     ├── processor.go       # Core metrics compilation engine loops
     ├── parser.go          # High-speed file log decoding scanner
     ├── matching.go        # Time-based multi-timeline pointer pairing
     └── variables/
-        └── variables.go   # Project types, structs and global config flags
+        └── variables.go   # Mutable global configurations and runtime flags
 ```
 
 ## ⚙️ Configuration (`src/variables/variables.go`)
 
-Adjust code behaviors seamlessly by altering runtime parameters inside your configuration file:
+Default code behaviors can be adjusted inside your configuration file using global mutable variables:
 
 ```go
-const (
+var (
 	DataSourceDir = "../data" // Location of raw telemetry JSON arrays
 
 	// PRIORITIZATION SWITCH
@@ -73,6 +74,10 @@ const (
 	// OUTPUT ORDER SWITCH 
 	// Options: "asc" (Oldest month first) or "desc" (Newest month first)
 	OutputOrder = "asc" 
+
+	// CHRONOLOGICAL FILTER BOUNDARY
+	// Holds runtime boundary from CLI parameter (e.g., "2026-08"). Blank evaluates all history.
+	StartDate = ""
 )
 ```
 
@@ -83,14 +88,20 @@ const (
    ```bash
    cd src
    ```
-3. Run the complete application compilation bundle together:
-   ```bash
-   go run .
-   ```
+3. Run the application bundle using one of the following compilation strategies:
+
+   * **Process all historical logs:**
+     ```bash
+     go run .
+     ```
+   * **Filter processing from a specific month onwards:**
+     ```bash
+     go run . -start 2026-08
+     ```
 
 ## 🧠 Data Processing Logic
 
-1. **Instantaneous Power Derivation:** Wallbox power draw (\(W\)) is dynamically computed per interval segment relative to absolute log duration:
+1. **Instantaneous Power Derivation:** Wallbox power draw (W) is dynamically computed per interval segment relative to absolute log duration:
    \[\text{Wallbox Power} = \frac{\Delta\text{Wh}}{\Delta\text{Time in Seconds}} \times 3600\]
 2. **Priority Apportionment:** Sourcing matrices split power segments. If configuration is set to `"car"`, the wallbox captures pure solar margins first, shifting residual household margins onto the grid whenever solar generation thresholds drop below current load requirements.
 3. **Surplus Grid Export Guard:** Whenever the property is actively back-exporting energy to the public network (`TotalGridPowerW <= 0`), the system automatically forces a 100% pure solar score allocation to all active consumption units to bypass sensor rounding margins.

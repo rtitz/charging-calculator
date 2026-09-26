@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-const (
+var (
 	AppName       = "Charging-Calculator"
-	AppVersion    = "1.0.1"
+	AppVersion    = "1.0.2"
 	DataSourceDir = "./data"
 
 	// PRIORITIZATION SWITCH ("house" or "car")
@@ -16,9 +16,12 @@ const (
 	// OUTPUT ORDER SWITCH ("asc" or "desc")
 	OutputOrder = "asc"
 
+	// START DATE FOR FILTERING TELEMETRY LOGS
+	StartDate = ""
+
 	// TARIFF PROPERTIES
 	GridPriceCents         = 27.25 // Octopus Arbeitspreis pro kWh in Cent
-	SolarExportCreditCents = 8.65  // EEG-Einspeisevergütung pro kWh in Cent
+	SolarExportCreditCents = 8.20  // EEG-Einspeisevergütung pro kWh in Cent
 
 )
 

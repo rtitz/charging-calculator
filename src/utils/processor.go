@@ -26,6 +26,12 @@ func discoverMonthlyFiles(dirPath string) (map[string]string, map[string]string,
 			continue
 		}
 		monthPrefix := fmt.Sprintf("%s-%s", parts[0], parts[1])
+
+		// Filter for start date
+		if variables.StartDate != "" && monthPrefix < variables.StartDate {
+			continue
+		}
+
 		fullPath := filepath.Join(dirPath, file.Name())
 		if strings.Contains(file.Name(), "solar") {
 			solarFiles[monthPrefix] = fullPath
