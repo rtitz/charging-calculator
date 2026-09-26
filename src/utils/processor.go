@@ -208,7 +208,6 @@ func ProcessMonthlyData(dirPath string) error {
 
 		metrics := calculateMetrics(month, solarTimeline, wbTimeline)
 
-		fmt.Printf("\n\n=================================================================")
 		fmt.Printf("\nMonth:                               %s (Priority: %s)\n", metrics.Month, variables.SolarPrioritization)
 		fmt.Printf("Total Solar Production:              %.2f kWh\n", metrics.TotalSolarGenerationkWh)
 		fmt.Printf("Total Surplus Grid Feed-In (Export): %.2f kWh\n", metrics.TotalGridFeedInkWh)

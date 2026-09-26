@@ -20,4 +20,4 @@ secure*
 # Other stuff
 .DS_Store
 .vscode/
-src/data/
+src/data/*.json
