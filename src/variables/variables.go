@@ -7,7 +7,7 @@ import (
 
 const (
 	AppName       = "Charging-Calculator"
-	AppVersion    = "1.0.0"
+	AppVersion    = "1.0.1"
 	DataSourceDir = "./data"
 
 	// PRIORITIZATION SWITCH ("house" or "car")
@@ -15,6 +15,11 @@ const (
 
 	// OUTPUT ORDER SWITCH ("asc" or "desc")
 	OutputOrder = "asc"
+
+	// TARIFF PROPERTIES
+	GridPriceCents         = 27.25 // Octopus Arbeitspreis pro kWh in Cent
+	SolarExportCreditCents = 8.65  // EEG-Einspeisevergütung pro kWh in Cent
+
 )
 
 var (

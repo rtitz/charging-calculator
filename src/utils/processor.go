@@ -39,7 +39,7 @@ func discoverMonthlyFiles(dirPath string) (map[string]string, map[string]string,
 func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxRecord) variables.MonthlyChargeMetrics {
 	metrics := variables.MonthlyChargeMetrics{Month: month}
 
-	// 1. Integrate Macro Household Totals from Solar Timeline
+	// 1. Daytime Household Totals aus Solar-Timeline integrieren
 	for i := 1; i < len(solar); i++ {
 		prevSolar := solar[i-1]
 		currSolar := solar[i]
@@ -57,7 +57,7 @@ func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxR
 		metrics.HouseConsumptionkWh += currSolar.Record.TotalHouseComsumptionW * timeFactor
 	}
 
-	// 2. Process Wallbox Timeline Slices
+	// 2. 24/7 Wallbox-Timeline verarbeiten
 	solarIdx := 0
 	for i := 1; i < len(wb); i++ {
 		prevWb := wb[i-1]
@@ -136,7 +136,7 @@ func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxR
 		metrics.GridChargedkWh += wbTotalkWh * (1.0 - wbSolarRatio)
 	}
 
-	// 3. Balance Metrics and System Splits
+	// 3. Systembilanzierung ausführen
 	metrics.TotalChargedkWh = metrics.SolarChargedkWh + metrics.GridChargedkWh
 	if metrics.TotalChargedkWh > 0 {
 		metrics.SolarPercentage = (metrics.SolarChargedkWh / metrics.TotalChargedkWh) * 100
@@ -158,7 +158,6 @@ func calculateMetrics(month string, solar []TimedSolarRecord, wb []TimedWallboxR
 
 	metrics.HouseSourcedFromGridkWh = metrics.HouseConsumptionkWh - metrics.HouseSourcedFromSolarkWh
 
-	// NEW PERCENTAGE RATIO CALCULATIONS
 	if metrics.HouseConsumptionkWh > 0 {
 		metrics.HouseSolarPercentage = (metrics.HouseSourcedFromSolarkWh / metrics.HouseConsumptionkWh) * 100
 	}
@@ -208,23 +207,30 @@ func ProcessMonthlyData(dirPath string) error {
 
 		metrics := calculateMetrics(month, solarTimeline, wbTimeline)
 
+		// 🌟 Finanzberechnungen für die Wallbox (Brutto vs. Reale Netto-Ersparnis)
+		wallboxTheoreticalCostEUR := (metrics.TotalChargedkWh * variables.GridPriceCents) / 100.0
+		wallboxActualGridCostEUR := (metrics.GridChargedkWh * variables.GridPriceCents) / 100.0
+
+		netSavingsPerkWhCents := variables.GridPriceCents - variables.SolarExportCreditCents
+		wallboxNetSavingsEUR := (metrics.SolarChargedkWh * netSavingsPerkWhCents) / 100.0
+
 		fmt.Printf("\nMonth:                               %s (Priority: %s)\n", metrics.Month, variables.SolarPrioritization)
 		fmt.Printf("Total Solar Production:              %.2f kWh\n", metrics.TotalSolarGenerationkWh)
 		fmt.Printf("Total Surplus Grid Feed-In (Export): %.2f kWh\n", metrics.TotalGridFeedInkWh)
 		fmt.Printf("-----------------------------------------------------------------\n")
-		fmt.Printf("HOUSEHOLD BASE METRICS (Excluding Wallbox):\n")
+		fmt.Printf("HOUSEHOLD BASE METRICS (Daytime Only - Inverter Active):\n")
 		fmt.Printf("  ├── Base House Consumption:        %.2f kWh\n", metrics.HouseConsumptionkWh)
 		fmt.Printf("  ├── Sourced from Solar:            %.2f kWh\n", metrics.HouseSourcedFromSolarkWh)
 		fmt.Printf("  └── Sourced from Grid:             %.2f kWh\n", metrics.HouseSourcedFromGridkWh)
 		fmt.Printf("  └── House Base Solar Share:        %.1f%%\n", metrics.HouseSolarPercentage)
 		fmt.Printf("-----------------------------------------------------------------\n")
-		fmt.Printf("WALLBOX METRICS:\n")
-		fmt.Printf("  ├── Wallbox Total Charged:         %.2f kWh\n", metrics.TotalChargedkWh)
-		fmt.Printf("  ├── Sourced from Solar:            %.2f kWh\n", metrics.SolarChargedkWh)
-		fmt.Printf("  └── Sourced from Grid:             %.2f kWh\n", metrics.GridChargedkWh)
+		fmt.Printf("WALLBOX METRICS (24/7 Accurate Tracking):\n")
+		fmt.Printf("  ├── Wallbox Total Charged:         %.2f kWh (Kosten ohne Solar: %.2f EUR)\n", metrics.TotalChargedkWh, wallboxTheoreticalCostEUR)
+		fmt.Printf("  ├── Sourced from Solar:            %.2f kWh (Netto-Ersparnis:   %.2f EUR)\n", metrics.SolarChargedkWh, wallboxNetSavingsEUR)
+		fmt.Printf("  └── Sourced from Grid:             %.2f kWh (Tatsächliche Kosten: %.2f EUR)\n", metrics.GridChargedkWh, wallboxActualGridCostEUR)
 		fmt.Printf("  └── Wallbox Solar Share:           %.1f%%\n", metrics.SolarPercentage)
 		fmt.Printf("-----------------------------------------------------------------\n")
-		fmt.Printf("COMBINED SYSTEM METRICS:\n")
+		fmt.Printf("COMBINED SYSTEM METRICS (Daytime + Wallbox):\n")
 		fmt.Printf("  ├── TOTAL CONSUMPTION FROM GRID:   %.2f kWh\n", metrics.TotalGridConsumptionkWh)
 		fmt.Printf("  └── OVERALL TOTAL CONSUMPTION:     %.2f kWh\n", metrics.OverallTotalConsumptionkWh)
 		fmt.Printf("  └── TOTAL SYSTEM SOLAR SHARE:      %.1f%%\n", metrics.TotalSolarPercentage)
